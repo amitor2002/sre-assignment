@@ -1,0 +1,79 @@
+# Blacklist (everything as default)
+*
+
+# White list (allowed)
+# ---------------------------------
+
+# repo stuff
+!*/
+!*.md
+!.gitignore
+!.myfuncs
+!*.png
+!*.svg
+!*.txt
+
+# HTML
+!*.html
+
+
+
+# UML diagrams/mermaid
+!*.wsd
+
+# Docker
+!Dockerfile
+!dockerfile
+
+# YAML
+!*.yaml
+!*.yml
+
+# Python
+!*.py
+
+# Project related files
+!myproject.service
+!nginx.conf
+!requirements.txt
+
+# Shell scripts
+!*.sh
+
+# C
+!Makefile
+!*.c
+!*.h
+
+# Virtual environment 
+venv/
+
+# CSS
+!*.css
+
+# Terraform
+!*.tf
+
+# JSON files
+!*.json
+
+__pycache__
+
+# JavaScript files
+!*.js
+
+# Directories to include
+!src
+!public
+
+# Terraform
+.terraform/          
+*.tfstate           
+*.tfstate.*          
+crash.log            
+override.tf          
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars     
+*.terraform.lock.hcl 
