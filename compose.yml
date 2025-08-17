@@ -1,0 +1,161 @@
+services:
+  # Simplified TiDB (single node for easier deployment)
+  tidb:
+    image: pingcap/tidb:latest
+    container_name: tidb-server
+    ports:
+      - "4000:4000"
+    command:
+      - /tidb-server
+      - --store=mocktikv
+      - --host=0.0.0.0
+      - --status=10080
+      - --log-level=info
+    networks:
+      - sre_network
+    volumes:
+      - tidb_data:/var/lib/tidb
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - sre_network
+
+  # Kafka Message Broker (FIXED)
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_PROCESS_ROLES: "broker"
+    networks:
+      - sre_network
+
+  # Database Initializer (runs first)
+  db-init:
+    build:
+      context: ./db-init
+      dockerfile: Dockerfile
+    container_name: db-initializer
+    environment:
+      - DB_HOST=tidb
+      - DB_PORT=4000
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=sre_app
+    depends_on:
+      - tidb
+    networks:
+      - sre_network
+    restart: "no"
+
+  # Backend API Service
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sre-api
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=tidb
+      - DB_PORT=4000
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=sre_app
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - KAFKA_BROKER=kafka:9092
+    depends_on:
+      - tidb
+      - kafka
+      - db-init
+    volumes:
+      - ./backend/logs:/app/logs
+    networks:
+      - sre_network
+    restart: unless-stopped
+
+  # Database Change Consumer
+  consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: sre-consumer
+    environment:
+      - NODE_ENV=production
+      - KAFKA_BROKER=kafka:9092
+      - KAFKA_TOPIC=tidb_changes
+    depends_on:
+      - kafka
+    volumes:
+      - ./consumer/logs:/app/logs
+    networks:
+      - sre_network
+    restart: unless-stopped
+
+  # Frontend React Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sre-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+    depends_on:
+      - api
+    networks:
+      - sre_network
+    restart: unless-stopped
+
+  # Simplified TiCDC (optional - can be disabled if problematic)
+  ticdc:
+    image: pingcap/ticdc:latest
+    container_name: ticdc-server
+    depends_on:
+      - tidb
+      - kafka
+    command:
+      - /cdc
+      - server
+      - --addr=0.0.0.0:8300
+      - --advertise-addr=ticdc:8300
+      - --log-level=info
+    ports:
+      - "8300:8300"
+    volumes:
+      - ticdc_logs:/logs
+    networks:
+      - sre_network
+    restart: unless-stopped
+
+networks:
+  sre_network:
+    driver: bridge
+
+volumes:
+  tidb_data:
+  ticdc_logs:
