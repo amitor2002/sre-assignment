@@ -134,7 +134,7 @@ const startServer = async () => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   logger.info('SIGTERM received, shutting down gracefully');
-  await kafkaProducer.disconnect();
+  // await kafkaProducer.disconnect();
   await db.end();
   process.exit(0);
 });

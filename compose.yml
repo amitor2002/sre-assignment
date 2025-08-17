@@ -1,20 +1,70 @@
 services:
-  # Simplified TiDB (single node for easier deployment)
+  # PD (Placement Driver) - Required for TiDB cluster
+  pd:
+    image: pingcap/pd:latest
+    container_name: pd-server
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    volumes:
+      - pd_data:/data
+    command:
+      - /pd-server
+      - --name=pd
+      - --data-dir=/data
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd:2379
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380
+      - --log-level=info
+    networks:
+      - sre_network
+    restart: unless-stopped
+
+  # TiKV Storage Engine - Required for TiDB cluster
+  tikv:
+    image: pingcap/tikv:latest
+    container_name: tikv-server
+    ports:
+      - "20160:20160"
+    volumes:
+      - tikv_data:/data
+    command:
+      - /tikv-server
+      - --pd-endpoints=http://pd:2379
+      - --data-dir=/data
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --log-level=info
+    depends_on:
+      - pd
+    networks:
+      - sre_network
+    restart: unless-stopped
+
+  # TiDB SQL Layer - The actual database
   tidb:
     image: pingcap/tidb:latest
     container_name: tidb-server
     ports:
       - "4000:4000"
+      - "10080:10080"
     command:
       - /tidb-server
-      - --store=mocktikv
+      - --store=tikv
+      - --path=pd:2379
       - --host=0.0.0.0
       - --status=10080
       - --log-level=info
+    depends_on:
+      - tikv
+      - pd
     networks:
       - sre_network
     volumes:
       - tidb_data:/var/lib/tidb
+    restart: unless-stopped
 
   # Zookeeper for Kafka
   zookeeper:
@@ -27,8 +77,9 @@ services:
       - "2181:2181"
     networks:
       - sre_network
+    restart: unless-stopped
 
-  # Kafka Message Broker (FIXED)
+  # Kafka Message Broker
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: kafka
@@ -51,6 +102,7 @@ services:
       KAFKA_PROCESS_ROLES: "broker"
     networks:
       - sre_network
+    restart: unless-stopped
 
   # Database Initializer (runs first)
   db-init:
@@ -131,19 +183,23 @@ services:
       - sre_network
     restart: unless-stopped
 
-  # Simplified TiCDC (optional - can be disabled if problematic)
+  # TiCDC for Change Data Capture (Proper implementation)
   ticdc:
     image: pingcap/ticdc:latest
     container_name: ticdc-server
     depends_on:
       - tidb
+      - pd
+      - tikv
       - kafka
     command:
       - /cdc
       - server
+      - --pd=http://pd:2379
       - --addr=0.0.0.0:8300
       - --advertise-addr=ticdc:8300
       - --log-level=info
+      - --log-file=/logs/ticdc.log
     ports:
       - "8300:8300"
     volumes:
@@ -157,5 +213,7 @@ networks:
     driver: bridge
 
 volumes:
+  pd_data:
+  tikv_data:
   tidb_data:
   ticdc_logs:
