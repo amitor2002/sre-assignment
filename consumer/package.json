@@ -1,0 +1,20 @@
+{
+  "name": "sre-consumer",
+  "version": "1.0.0",
+  "description": "Kafka Consumer for Database Changes and User Activities",
+  "main": "consumer.js",
+  "scripts": {
+    "start": "node consumer.js",
+    "dev": "nodemon consumer.js"
+  },
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "log4js": "^6.9.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "author": "SRE Student",
+  "license": "MIT"
+}
