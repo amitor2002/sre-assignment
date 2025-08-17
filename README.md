@@ -549,16 +549,6 @@ Services start in this order:
 9. **DevOps Practices**: Infrastructure as code, health checks
 10. **SRE Implementation**: Monitoring, logging, observability
 
-## 📞 Support
-
-If you encounter any issues:
-
-1. Check the troubleshooting section above
-2. Verify all prerequisites are met
-3. Check Docker logs: `docker-compose logs <service>`
-4. Ensure ports are available
-5. Verify Docker has sufficient resources (8GB+ RAM)
-
 ---
 
 **🎉 Congratulations! You've successfully deployed a complete SRE monitoring application with real-time change data capture, structured logging, and message processing capabilities.**
