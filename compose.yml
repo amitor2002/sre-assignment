@@ -1,13 +1,13 @@
-version: '3.8'
+version: "3.8"
 
 # Production-ready SRE Assignment Stack
-# Simplified without health checks for better compatibility
+# Fixed version with proper network configuration and dependencies
 
 services:
   # =============================================================================
   # TiDB DISTRIBUTED DATABASE CLUSTER
   # =============================================================================
-  
+
   # PD (Placement Driver) - Cluster metadata and coordination
   pd:
     image: pingcap/pd:v6.5.0
@@ -32,7 +32,7 @@ services:
       - --log-level=info
       - --log-file=/data/pd.log
     networks:
-      - tidb_network
+      - sre_network
     restart: unless-stopped
 
   # TiKV (Storage Engine) - Distributed key-value storage
@@ -59,7 +59,7 @@ services:
     depends_on:
       - pd
     networks:
-      - tidb_network
+      - sre_network
     restart: unless-stopped
 
   # TiDB (SQL Layer) - MySQL-compatible SQL interface
@@ -86,7 +86,7 @@ services:
       - tikv
       - pd
     networks:
-      - tidb_network
+      - sre_network
     restart: unless-stopped
 
   # =============================================================================
@@ -112,7 +112,7 @@ services:
       - zk_data:/var/lib/zookeeper/data
       - zk_logs:/var/lib/zookeeper/log
     networks:
-      - kafka_network
+      - sre_network
     restart: unless-stopped
 
   # Kafka - Message broker for real-time data streaming
@@ -134,8 +134,8 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      KAFKA_DELETE_TOPIC_ENABLE: 'true'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_LOG_SEGMENT_BYTES: 1073741824
     volumes:
@@ -143,7 +143,7 @@ services:
     depends_on:
       - zookeeper
     networks:
-      - kafka_network
+      - sre_network
     restart: unless-stopped
 
   # =============================================================================
@@ -171,30 +171,12 @@ services:
       - --tz=UTC
     volumes:
       - ticdc_logs:/logs
-      - ./scripts/cdc-tasks:/scripts
     depends_on:
       - tidb
       - kafka
     networks:
-      - tidb_network
-      - kafka_network
+      - sre_network
     restart: unless-stopped
-
-  # CDC Task Manager - Creates and manages CDC tasks automatically
-  cdc-task-manager:
-    image: pingcap/ticdc:v6.5.0
-    container_name: cdc-task-manager
-    environment:
-      - TZ=UTC
-    volumes:
-      - ./scripts/cdc-tasks:/scripts
-    depends_on:
-      - ticdc
-    networks:
-      - tidb_network
-      - kafka_network
-    restart: "no"
-    entrypoint: /scripts/setup-cdc-tasks.sh
 
   # =============================================================================
   # APPLICATION LAYER
@@ -216,7 +198,7 @@ services:
     depends_on:
       - tidb
     networks:
-      - tidb_network
+      - sre_network
     restart: "no"
     logging:
       driver: "json-file"
@@ -251,9 +233,7 @@ services:
       - db-init
       - kafka
     networks:
-      - tidb_network
-      - kafka_network
-      - app_network
+      - sre_network
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -276,7 +256,7 @@ services:
     depends_on:
       - api
     networks:
-      - app_network
+      - sre_network
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -302,8 +282,9 @@ services:
       - ./consumer/logs:/app/logs
     depends_on:
       - kafka
+      - api
     networks:
-      - kafka_network
+      - sre_network
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -312,33 +293,17 @@ services:
         max-file: "5"
 
 # =============================================================================
-# NETWORK CONFIGURATION
+# NETWORK CONFIGURATION - SIMPLIFIED TO SINGLE NETWORK
 # =============================================================================
 
 networks:
-  # TiDB cluster internal network
-  tidb_network:
+  # Single network for all services to avoid conflicts
+  sre_network:
     driver: bridge
-    name: sre_tidb_network
+    name: sre_network
     ipam:
       config:
-        - subnet: 172.20.0.0/16
-
-  # Kafka cluster internal network  
-  kafka_network:
-    driver: bridge
-    name: sre_kafka_network
-    ipam:
-      config:
-        - subnet: 172.21.0.0/16
-
-  # Application layer network
-  app_network:
-    driver: bridge
-    name: sre_app_network
-    ipam:
-      config:
-        - subnet: 172.22.0.0/16
+        - subnet: 172.25.0.0/16
 
 # =============================================================================
 # PERSISTENT STORAGE
