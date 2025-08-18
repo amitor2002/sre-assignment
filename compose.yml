@@ -21,7 +21,6 @@ services:
     environment:
       - TZ=UTC
     command:
-      - /pd-server
       - --name=pd0
       - --data-dir=/data
       - --client-urls=http://0.0.0.0:2379
@@ -48,7 +47,6 @@ services:
     environment:
       - TZ=UTC
     command:
-      - /tikv-server
       - --pd-endpoints=http://pd:2379
       - --data-dir=/data
       - --addr=0.0.0.0:20160
@@ -73,7 +71,6 @@ services:
     environment:
       - TZ=UTC
     command:
-      - /tidb-server
       - --store=tikv
       - --path=pd:2379
       - --host=0.0.0.0
@@ -160,7 +157,6 @@ services:
     environment:
       - TZ=UTC
     command:
-      - /cdc
       - server
       - --pd=http://pd:2379
       - --addr=0.0.0.0:8300
