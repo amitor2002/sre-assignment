@@ -1,14 +1,8 @@
-version: "3.8"
-
-# Production-ready SRE Assignment Stack
-# Fixed version with proper network configuration and dependencies
-
 services:
   # =============================================================================
   # TiDB DISTRIBUTED DATABASE CLUSTER
   # =============================================================================
 
-  # PD (Placement Driver) - Cluster metadata and coordination
   pd:
     image: pingcap/pd:v6.5.0
     container_name: pd-server
@@ -28,13 +22,10 @@ services:
       - --advertise-client-urls=http://pd:2379
       - --advertise-peer-urls=http://pd:2380
       - --initial-cluster=pd0=http://pd:2380
-      - --log-level=info
-      - --log-file=/data/pd.log
     networks:
       - sre_network
     restart: unless-stopped
 
-  # TiKV (Storage Engine) - Distributed key-value storage
   tikv:
     image: pingcap/tikv:v6.5.0
     container_name: tikv-server
@@ -52,15 +43,12 @@ services:
       - --addr=0.0.0.0:20160
       - --status-addr=0.0.0.0:20180
       - --advertise-addr=tikv:20160
-      - --log-level=info
-      - --log-file=/data/tikv.log
     depends_on:
       - pd
     networks:
       - sre_network
     restart: unless-stopped
 
-  # TiDB (SQL Layer) - MySQL-compatible SQL interface
   tidb:
     image: pingcap/tidb:v6.5.0
     container_name: tidb-server
@@ -74,10 +62,8 @@ services:
       - --store=tikv
       - --path=pd:2379
       - --host=0.0.0.0
-      - --port=4000
+      - -P=4000
       - --status=10080
-      - --log-level=info
-      - --log-file=/tmp/tidb.log
       - --advertise-address=tidb
     depends_on:
       - tikv
@@ -85,12 +71,17 @@ services:
     networks:
       - sre_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:10080/status || exit 1"]
+      timeout: 10s
+      retries: 12
+      start_period: 60s
+      interval: 10s
 
   # =============================================================================
   # MESSAGE QUEUE INFRASTRUCTURE
   # =============================================================================
 
-  # Zookeeper - Kafka coordination service
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: zookeeper
@@ -112,7 +103,6 @@ services:
       - sre_network
     restart: unless-stopped
 
-  # Kafka - Message broker for real-time data streaming
   kafka:
     image: confluentinc/cp-kafka:7.4.0
     container_name: kafka
@@ -125,7 +115,7 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.9092
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
@@ -147,7 +137,6 @@ services:
   # CHANGE DATA CAPTURE & MONITORING
   # =============================================================================
 
-  # TiCDC - Change Data Capture for real-time data synchronization
   ticdc:
     image: pingcap/ticdc:v6.5.0
     container_name: ticdc-server
@@ -157,28 +146,58 @@ services:
     environment:
       - TZ=UTC
     command:
+      - /cdc
       - server
       - --pd=http://pd:2379
       - --addr=0.0.0.0:8300
       - --advertise-addr=ticdc:8300
-      - --log-level=info
-      - --log-file=/logs/ticdc.log
       - --gc-ttl=86400
-      - --tz=UTC
     volumes:
       - ticdc_logs:/logs
     depends_on:
-      - tidb
-      - kafka
+      tidb:
+        condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
       - sre_network
     restart: unless-stopped
+
+  cdc-task-manager:
+    image: pingcap/ticdc:v6.5.0
+    container_name: cdc-task-manager
+    environment:
+      - TZ=UTC
+      - TICDC_ADDR=http://ticdc:8300
+      - KAFKA_ADDR=kafka:29092
+    depends_on:
+      - ticdc
+    networks:
+      - sre_network
+    restart: "no"
+    command: >
+      sh -c "
+        echo 'Waiting for TiCDC to be ready...' &&
+        sleep 60 &&
+        echo 'Creating changefeed for user activities...' &&
+        /cdc cli changefeed create \
+          --server=http://ticdc:8300 \
+          --sink-uri='kafka://kafka:29092/user_activities?protocol=canal-json' \
+          --changefeed-id='user-activities-feed' \
+          --rules-filter='sre_app.users,sre_app.user_tokens,sre_app.activity_logs' &&
+        echo 'Creating changefeed for database changes...' &&
+        /cdc cli changefeed create \
+          --server=http://ticdc:8300 \
+          --sink-uri='kafka://kafka:29092/database_changes?protocol=canal-json' \
+          --changefeed-id='database-changes-feed' \
+          --rules-filter='sre_app.*' &&
+        echo 'CDC tasks created successfully'
+      "
 
   # =============================================================================
   # APPLICATION LAYER
   # =============================================================================
 
-  # Database Initializer - Sets up schema and seed data
   db-init:
     build:
       context: ./db-init
@@ -191,8 +210,11 @@ services:
       - DB_PASSWORD=
       - DB_NAME=sre_app
       - TZ=UTC
+      - WAIT_TIMEOUT=180
+      - MAX_RETRIES=20
     depends_on:
-      - tidb
+      tidb:
+        condition: service_healthy
     networks:
       - sre_network
     restart: "no"
@@ -202,7 +224,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Backend API - Node.js application server
   api:
     build:
       context: ./backend
@@ -222,12 +243,18 @@ services:
       - KAFKA_BROKER=kafka:29092
       - LOG_LEVEL=info
       - TZ=UTC
+      - KAFKAJS_NO_PARTITIONER_WARNING=1
+      - DB_CONNECTION_TIMEOUT=30000
+      - DB_ACQUIRE_TIMEOUT=60000
+      - DB_RECONNECT=true
     volumes:
       - ./backend/logs:/app/logs
       - api_uploads:/app/uploads
     depends_on:
-      - db-init
-      - kafka
+      db-init:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_started
     networks:
       - sre_network
     restart: unless-stopped
@@ -237,7 +264,6 @@ services:
         max-size: "50m"
         max-file: "5"
 
-  # Frontend - React application
   frontend:
     build:
       context: ./frontend
@@ -260,7 +286,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Message Consumer - Processes CDC events and user activities
   consumer:
     build:
       context: ./consumer
@@ -274,6 +299,7 @@ services:
       - KAFKA_TOPICS=user_activities,database_changes,tidb-cdc-events
       - LOG_LEVEL=info
       - TZ=UTC
+      - KAFKAJS_NO_PARTITIONER_WARNING=1
     volumes:
       - ./consumer/logs:/app/logs
     depends_on:
@@ -288,12 +314,7 @@ services:
         max-size: "50m"
         max-file: "5"
 
-# =============================================================================
-# NETWORK CONFIGURATION - SIMPLIFIED TO SINGLE NETWORK
-# =============================================================================
-
 networks:
-  # Single network for all services to avoid conflicts
   sre_network:
     driver: bridge
     name: sre_network
@@ -301,12 +322,7 @@ networks:
       config:
         - subnet: 172.25.0.0/16
 
-# =============================================================================
-# PERSISTENT STORAGE
-# =============================================================================
-
 volumes:
-  # TiDB cluster data
   pd_data:
     driver: local
     name: sre_pd_data
@@ -316,8 +332,6 @@ volumes:
   ticdc_logs:
     driver: local
     name: sre_ticdc_logs
-
-  # Kafka infrastructure data
   zk_data:
     driver: local
     name: sre_zk_data
@@ -327,8 +341,6 @@ volumes:
   kafka_data:
     driver: local
     name: sre_kafka_data
-
-  # Application data
   api_uploads:
     driver: local
     name: sre_api_uploads
